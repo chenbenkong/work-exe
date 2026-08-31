@@ -1,0 +1,48 @@
+name: Build WorkExe WPF
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore NuGet packages
+        run: nuget restore WorkExe.sln
+
+      - name: Build solution
+        run: msbuild WorkExe.sln /p:Configuration=Release /p:Platform="Any CPU"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkExe-Release
+          path: WorkExe/bin/Release/
+
+      - name: Create release package
+        run: |
+          mkdir pkg
+          xcopy /E /I /Y WorkExe\bin\Release pkg\WorkExe
+          copy README.md pkg\
+          copy config.json pkg\
+          copy Run.bat pkg\
+          copy Build-and-Run.bat pkg\
+          7z a WorkExe-Release.zip .\pkg\*
+        shell: cmd
+
+      - name: Upload release zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkExe-Release-Zip
+          path: WorkExe-Release.zip
