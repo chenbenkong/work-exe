@@ -175,18 +175,20 @@ namespace WorkExe
                 g.FillEllipse(skin, x, y, size, size);
                 g.DrawEllipse(pen, x, y, size, size);
             }
+            float fx = x, fy = y, fs = size;
             using (var eye = new SolidBrush(Color.FromArgb(255, 60, 45, 35)))
             {
-                g.FillEllipse(eye, x + size / 4, y + size * 0.38, size * 0.09, size * 0.09);
-                g.FillEllipse(eye, x + size * 0.66, y + size * 0.38, size * 0.09, size * 0.09);
+                float ew = fs * 0.09f;
+                g.FillEllipse(eye, fx + fs * 0.25f, fy + fs * 0.38f, ew, ew);
+                g.FillEllipse(eye, fx + fs * 0.66f, fy + fs * 0.38f, ew, ew);
             }
             using (var mouth = new Pen(Color.FromArgb(255, 180, 80, 80), 3))
             {
-                g.DrawArc(mouth, x + size * 0.28, y + size * 0.55, size * 0.44, size * 0.22, 0, 180);
+                g.DrawArc(mouth, fx + fs * 0.28f, fy + fs * 0.55f, fs * 0.44f, fs * 0.22f, 0, 180);
             }
             using (var hair = new Pen(Color.FromArgb(255, 55, 42, 32), 10))
             {
-                g.DrawArc(hair, x - 5, y - 10, size + 10, size * 0.75, 180, 180);
+                g.DrawArc(hair, fx - 5f, fy - 10f, fs + 10f, fs * 0.75f, 180, 180);
             }
         }
 
