@@ -2,7 +2,20 @@
 
 测试时间：2026-08-31
 测试环境：GitHub Actions `windows-latest` + Visual Studio 2022 MSBuild
-构建结果：成功
+构建结果：成功（v1.1.0）
+
+## v1.1.0 修复项
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| 没有设置界面 | 未提供图形化配置入口 | 新增 `SettingsWindow`，可从右键菜单或托盘进入 |
+| 不能常驻悬浮 | `Topmost` 会被其他程序抢走 Z 序 | 每秒调用 Win32 `SetWindowPos(HWND_TOPMOST)` 强制重新置顶 |
+| 失焦后 Esc/空格失效 | 键盘事件绑在窗口上，窗口失焦即收不到 | 改用 `WH_KEYBOARD_LL` 全局低级键盘钩子 |
+| 窗口可能跑出屏幕 | 缺少位置保护 | 看门狗检测中心点，越界自动拉回工作区 |
+| 全屏时人物被拉伸 | 图片未固定尺寸，随窗口拉伸 | 人物图固定宽高，窗口预留气泡空间 |
+| 透明窗口挡住桌面 | Grid 背景可命中测试 | 常态设为 `{x:Null}` 点击穿透，仅鞭子模式启用拦截 |
+| 依赖 Python 生成素材 | 素材生成走外部脚本 | 改为 C# / GDI+ 原生生成（`AssetGenerator.cs`） |
+| 退出可能重入 | `OnClosing` → `CleanExit` → `Shutdown` 递归 | 增加 `_isExiting` 守卫 |
 
 ## 构建检查
 
@@ -38,11 +51,12 @@
 ## 测试结果
 
 - 构建与打包：通过
+- v1.1.0 新增设置界面、全局钩子、双重看门狗，均已通过编译
 - 核心交互：已实现并可通过运行验证
 - 未实现项（按需求明确排除）：macOS、多显示器、窗口边缘识别、攀爬跟随窗口、窗口关闭后掉落、二级菜单、血迹伤口、真实暴力效果
 - 已知限制：当前动作为程序生成占位素材；真实照片生成完整动作需替换 `WorkExe/Assets/` 中的 PNG 或接入图像生成管线
 
 ## 下载地址
 
-- Release 页面：https://github.com/chenbenkong/work-exe/releases/tag/v1.0.0
-- 直接下载：https://github.com/chenbenkong/work-exe/releases/download/v1.0.0/WorkExe-Release.zip
+- Release 页面：https://github.com/chenbenkong/work-exe/releases/tag/v1.1.0
+- 直接下载：https://github.com/chenbenkong/work-exe/releases/download/v1.1.0/WorkExe-Release.zip
