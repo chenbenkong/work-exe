@@ -15,6 +15,7 @@ namespace WorkExe
         public event EventHandler HideRequested;
         public event EventHandler ExitRequested;
         public event EventHandler RestoreRequested;
+        public event EventHandler SettingsRequested;
 
         public TrayManager()
         {
@@ -22,6 +23,8 @@ namespace WorkExe
             _menu.Items.Add("显示", null, (s, e) => ShowRequested?.Invoke(this, EventArgs.Empty));
             _menu.Items.Add("隐藏", null, (s, e) => HideRequested?.Invoke(this, EventArgs.Empty));
             _menu.Items.Add("恢复默认位置", null, (s, e) => RestoreRequested?.Invoke(this, EventArgs.Empty));
+            _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add("设置...", null, (s, e) => SettingsRequested?.Invoke(this, EventArgs.Empty));
             _menu.Items.Add(new ToolStripSeparator());
             _menu.Items.Add("退出", null, (s, e) => ExitRequested?.Invoke(this, EventArgs.Empty));
 

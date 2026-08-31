@@ -12,6 +12,8 @@ namespace WorkExe
         public string BossPhotoPath { get; set; } = @"..\assets\boss.png";
         public string Size { get; set; } = "medium";
         public bool AlwaysOnTop { get; set; } = true;
+        public bool ShowInTaskbar { get; set; } = false;
+        public bool StartWithWindows { get; set; } = false;
         public double Opacity { get; set; } = 1.0;
         public List<string> HitLines { get; set; } = new List<string>
         {
@@ -36,6 +38,29 @@ namespace WorkExe
             "老板，我错了！",
             "再给我一次机会！"
         };
+
+        public static Config CreateDefault()
+        {
+            return new Config();
+        }
+
+        public static string LinesToText(List<string> lines)
+        {
+            if (lines == null) return "";
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        public static List<string> TextToLines(string text)
+        {
+            var list = new List<string>();
+            if (string.IsNullOrWhiteSpace(text)) return list;
+            foreach (var raw in text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var line = raw.Trim();
+                if (line.Length > 0) list.Add(line);
+            }
+            return list;
+        }
 
         private static string ConfigPath
         {

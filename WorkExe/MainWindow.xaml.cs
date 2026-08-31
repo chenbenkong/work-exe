@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -26,6 +27,7 @@ namespace WorkExe
         private double _scale = 1.0;
         private double _baseWidth = 160;
         private double _baseHeight = 200;
+        private const double BubbleExtra = 60;
 
         private GameMode _gameMode = GameMode.None;
         private enum GameMode { None, Whip, Cannon, Cow }
@@ -42,15 +44,25 @@ namespace WorkExe
         private double _cannonAngle = 0;
         private double _preGameLeft, _preGameTop, _preGameWidth, _preGameHeight;
 
+        private IntPtr _hookId = IntPtr.Zero;
+        private NativeMethods.HookProc _hookProc;
+        private DispatcherTimer _watchdogTimer;
+        private SettingsWindow _settingsWindow;
+        private bool _isExiting = false;
+
         public MainWindow()
         {
             InitializeComponent();
+            EnsureAssets();
             WhipImage.Source = LoadAssetImage("whip.png");
             CannonImage.Source = LoadAssetImage("cannon.png");
             CowImage.Source = LoadAssetImage("cow.png");
             _config = Config.Load();
             ApplySize(_config.Size);
             Topmost = _config.AlwaysOnTop;
+            Opacity = _config.Opacity;
+            ShowInTaskbar = _config.ShowInTaskbar;
+            StartWatchdog();
             _engine = new CharacterEngine(_config);
             _engine.FrameChanged += (s, e) => UpdateFrame();
             _engine.StateFinished += OnStateFinished;
@@ -61,6 +73,7 @@ namespace WorkExe
             _tray.HideRequested += (s, e) => { Visibility = Visibility.Hidden; };
             _tray.ExitRequested += (s, e) => CleanExit();
             _tray.RestoreRequested += (s, e) => EmergencyRestore();
+            _tray.SettingsRequested += (s, e) => Dispatcher.Invoke(OpenSettings);
 
             CharacterImage.MouseLeftButtonDown += CharacterImage_MouseLeftButtonDown;
             CharacterImage.MouseLeftButtonUp += CharacterImage_MouseLeftButtonUp;
@@ -75,6 +88,53 @@ namespace WorkExe
             PositionToBottomCenter();
         }
 
+        private void EnsureAssets()
+        {
+            try
+            {
+                string dir = AssetGenerator.AssetsDir;
+                bool missing = !Directory.Exists(dir) ||
+                               Directory.GetFiles(dir, "*.png").Length == 0;
+                if (missing)
+                {
+                    string photo = Path.Combine(AssetGenerator.ProjectAssetsDir, "boss.png");
+                    AssetGenerator.Generate(File.Exists(photo) ? photo : null);
+                }
+            }
+            catch { }
+        }
+
+        private void StartWatchdog()
+        {
+            _watchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _watchdogTimer.Tick += WatchdogTick;
+            _watchdogTimer.Start();
+        }
+
+        private void WatchdogTick(object sender, EventArgs e)
+        {
+            if (_config.AlwaysOnTop)
+            {
+                // 用 Win32 强制重新置顶，防止被其他程序抢走 Z 序
+                var handle = new WindowInteropHelper(this).Handle;
+                NativeMethods.SetWindowPos(handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
+                    NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+            }
+
+            if (_gameMode == GameMode.None && Visibility == Visibility.Visible && !_isDragging)
+            {
+                var area = NativeMethods.GetWorkArea();
+                double cx = Left + Width / 2;
+                double cy = Top + Height / 2;
+                if (cx < area.Left || cx > area.Right || cy < area.Top || cy > area.Bottom)
+                {
+                    Left = Math.Max(area.Left, Math.Min(cx - Width / 2, area.Right - Width));
+                    Top = Math.Max(area.Top, Math.Min(cy - Height / 2, area.Bottom - Height));
+                }
+            }
+        }
+
         private void Window_SourceInitialized(object sender, EventArgs e)
         {
             _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
@@ -82,6 +142,56 @@ namespace WorkExe
             NativeMethods.RegisterHotKey(_hwndSource.Handle, HOTKEY_ID,
                 NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_SHIFT,
                 NativeMethods.VK_Q);
+
+            // 全局低级键盘钩子：窗口失焦时 Esc / 空格依然可用
+            try
+            {
+                _hookProc = KeyboardHookCallback;
+                _hookId = NativeMethods.SetWindowsHookEx(
+                    NativeMethods.WH_KEYBOARD_LL, _hookProc,
+                    NativeMethods.GetModuleHandle(null), 0);
+            }
+            catch { _hookId = IntPtr.Zero; }
+        }
+
+        private IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                int msg = wParam.ToInt32();
+                var kb = (NativeMethods.KBDLLHOOKSTRUCT)Marshal.PtrToStructure(
+                    lParam, typeof(NativeMethods.KBDLLHOOKSTRUCT));
+                uint vk = kb.vkCode;
+
+                if (msg == NativeMethods.WM_KEYDOWN || msg == NativeMethods.WM_SYSKEYDOWN)
+                {
+                    if (vk == NativeMethods.VK_ESCAPE)
+                    {
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (_gameMode != GameMode.None) ExitGameMode();
+                        }));
+                        return (IntPtr)1;
+                    }
+                    if (vk == NativeMethods.VK_SPACE && _gameMode == GameMode.Cannon)
+                    {
+                        Dispatcher.BeginInvoke(new Action(StartCannonCharge));
+                        return (IntPtr)1;
+                    }
+                }
+                else if (msg == NativeMethods.WM_KEYUP || msg == NativeMethods.WM_SYSKEYUP)
+                {
+                    if (vk == NativeMethods.VK_SPACE && _gameMode == GameMode.Cannon)
+                    {
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (_cannonCharging && !_cannonFired) FireCannon();
+                        }));
+                        return (IntPtr)1;
+                    }
+                }
+            }
+            return NativeMethods.CallNextHookEx(_hookId, nCode, wParam, lParam);
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -99,13 +209,12 @@ namespace WorkExe
         {
             var area = NativeMethods.GetWorkArea();
             double screenW = area.Right - area.Left;
-            double screenH = area.Bottom - area.Top;
             double w = _baseWidth * _scale;
-            double h = _baseHeight * _scale;
+            double winH = _baseHeight * _scale + BubbleExtra;
             Left = area.Left + (screenW - w) / 2;
-            Top = area.Bottom - h - 8;
+            Top = area.Bottom - winH - 8;
             Width = w;
-            Height = h;
+            Height = winH;
         }
 
         private void ApplySize(string size)
@@ -118,9 +227,11 @@ namespace WorkExe
             }
             _config.Size = size.ToLower();
             Width = _baseWidth * _scale;
-            Height = _baseHeight * _scale;
-            CharacterScale.ScaleX = _scale;
-            CharacterScale.ScaleY = _scale;
+            Height = _baseHeight * _scale + BubbleExtra;
+            CharacterImage.Width = _baseWidth * _scale;
+            CharacterImage.Height = _baseHeight * _scale;
+            if (_gameMode != GameMode.Whip)
+                CharacterImage.Margin = new Thickness(0, BubbleExtra, 0, 0);
         }
 
         private BitmapImage LoadAssetImage(string name)
@@ -224,6 +335,7 @@ namespace WorkExe
             AddMenuItem(menu, "暂时隐藏", () => { Visibility = Visibility.Hidden; });
             AddMenuItem(menu, "恢复默认状态", () => EmergencyRestore());
             menu.Items.Add(new Separator());
+            AddMenuItem(menu, "设置...", () => OpenSettings());
             AddMenuItem(menu, "退出程序", () => CleanExit());
             menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
             menu.IsOpen = true;
@@ -260,6 +372,29 @@ namespace WorkExe
         {
             BubbleText.Text = text;
             BubbleBorder.Visibility = Visibility.Visible;
+            BubbleBorder.UpdateLayout();
+
+            var area = NativeMethods.GetWorkArea();
+            double charLeft, charTop;
+            if (_gameMode == GameMode.Whip)
+            {
+                charLeft = _preGameLeft - area.Left;
+                charTop = _preGameTop - area.Top + BubbleExtra;
+            }
+            else
+            {
+                charLeft = 0;
+                charTop = BubbleExtra;
+            }
+
+            double bw = BubbleBorder.ActualWidth > 0 ? BubbleBorder.ActualWidth : 120;
+            double bh = BubbleBorder.ActualHeight > 0 ? BubbleBorder.ActualHeight : 30;
+            double bx = charLeft + (CharacterImage.Width - bw) / 2;
+            double by = charTop - bh - 8;
+            if (by < 0) by = charTop + 4;
+            if (bx < 0) bx = 0;
+            BubbleBorder.Margin = new Thickness(bx, by, 0, 0);
+
             if (_bubbleTimer == null)
             {
                 _bubbleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -299,7 +434,8 @@ namespace WorkExe
             Height = area.Bottom - area.Top;
             Left = area.Left;
             Top = area.Top;
-            CharacterImage.Margin = new Thickness(_preGameLeft - area.Left, _preGameTop - area.Top, 0, 0);
+            CharacterImage.Margin = new Thickness(_preGameLeft - area.Left, _preGameTop - area.Top + BubbleExtra, 0, 0);
+            RootGrid.Background = Brushes.Transparent;
             WhipImage.Visibility = Visibility.Visible;
             _whipTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
             _whipTimer.Tick += WhipTick;
@@ -400,21 +536,28 @@ namespace WorkExe
             }
             if (_gameMode == GameMode.Cannon && e.Key == Key.Space && !_cannonCharging && !_cannonFired)
             {
-                _cannonCharging = true;
-                _cannonChargeStart = DateTime.Now;
-                _cannonTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-                int lineIdx = 0;
-                _cannonTimer.Tick += (s, ev) =>
-                {
-                    var lines = _config.CannonChargeLines;
-                    if (lines.Count > 0)
-                        ShowBubble(lines[lineIdx % lines.Count]);
-                    lineIdx++;
-                };
-                _cannonTimer.Start();
-                var firstLines = _config.CannonChargeLines;
-                if (firstLines.Count > 0) ShowBubble(firstLines[0]);
+                StartCannonCharge();
+                e.Handled = true;
             }
+        }
+
+        private void StartCannonCharge()
+        {
+            if (_cannonCharging || _cannonFired) return;
+            _cannonCharging = true;
+            _cannonChargeStart = DateTime.Now;
+            _cannonTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            int lineIdx = 0;
+            _cannonTimer.Tick += (s, ev) =>
+            {
+                var lines = _config.CannonChargeLines;
+                if (lines.Count > 0)
+                    ShowBubble(lines[lineIdx % lines.Count]);
+                lineIdx++;
+            };
+            _cannonTimer.Start();
+            var firstLines = _config.CannonChargeLines;
+            if (firstLines.Count > 0) ShowBubble(firstLines[0]);
         }
 
         private void MainWindow_KeyUp(object sender, KeyEventArgs e)
@@ -470,7 +613,8 @@ namespace WorkExe
             WhipImage.Visibility = Visibility.Collapsed;
             CannonImage.Visibility = Visibility.Collapsed;
             CowImage.Visibility = Visibility.Collapsed;
-            CharacterImage.Margin = new Thickness(0);
+            CharacterImage.Margin = new Thickness(0, BubbleExtra, 0, 0);
+            RootGrid.Background = null;
             PositionToBottomCenter();
             _engine.SetState(CharacterState.Idle);
         }
@@ -484,19 +628,66 @@ namespace WorkExe
             _engine.SetState(CharacterState.Idle);
         }
 
+        private void OpenSettings()
+        {
+            if (_settingsWindow != null && _settingsWindow.IsLoaded)
+            {
+                _settingsWindow.Activate();
+                return;
+            }
+            _settingsWindow = new SettingsWindow(_config);
+            _settingsWindow.SettingsApplied += OnSettingsApplied;
+            _settingsWindow.Closed += (s, e) => _settingsWindow = null;
+            _settingsWindow.Show();
+            _settingsWindow.Activate();
+        }
+
+        private void OnSettingsApplied(object sender, EventArgs e)
+        {
+            ApplySize(_config.Size);
+            Topmost = _config.AlwaysOnTop;
+            Opacity = _config.Opacity;
+            ShowInTaskbar = _config.ShowInTaskbar;
+            PositionToBottomCenter();
+            ReloadAssets();
+        }
+
+        private void ReloadAssets()
+        {
+            try
+            {
+                WhipImage.Source = LoadAssetImage("whip.png");
+                CannonImage.Source = LoadAssetImage("cannon.png");
+                CowImage.Source = LoadAssetImage("cow.png");
+                _engine.Reload();
+                UpdateFrame();
+            }
+            catch { }
+        }
+
         private void CleanExit()
         {
+            if (_isExiting) return;
+            _isExiting = true;
             _engine?.Stop();
             _tray?.Dispose();
             _whipTimer?.Stop();
             _cannonTimer?.Stop();
             _cowTimer?.Stop();
             _bubbleTimer?.Stop();
+            _watchdogTimer?.Stop();
+
+            if (_hookId != IntPtr.Zero)
+            {
+                NativeMethods.UnhookWindowsHookEx(_hookId);
+                _hookId = IntPtr.Zero;
+            }
             if (_hwndSource != null)
             {
                 NativeMethods.UnregisterHotKey(_hwndSource.Handle, HOTKEY_ID);
                 _hwndSource.RemoveHook(WndProc);
             }
+            _settingsWindow?.Close();
             Application.Current.Shutdown();
         }
 

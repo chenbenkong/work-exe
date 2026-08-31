@@ -155,6 +155,16 @@ namespace WorkExe
             State = state;
         }
 
+        public void Reload()
+        {
+            foreach (var key in new List<CharacterState>(_frames.Keys))
+            {
+                _frames[key].Clear();
+            }
+            LoadAssets();
+            _frameIndex = 0;
+        }
+
         public void Stop()
         {
             _timer?.Stop();

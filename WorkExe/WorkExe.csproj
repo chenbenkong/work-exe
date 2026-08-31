@@ -63,6 +63,7 @@
     </Compile>
     <Compile Include="Config.cs" />
     <Compile Include="NativeMethods.cs" />
+    <Compile Include="AssetGenerator.cs" />
     <Compile Include="TrayManager.cs" />
     <Compile Include="CharacterEngine.cs" />
     <Compile Include="MainWindow.xaml.cs">
@@ -70,6 +71,14 @@
       <SubType>Code</SubType>
     </Compile>
     <Page Include="MainWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="SettingsWindow.xaml.cs">
+      <DependentUpon>SettingsWindow.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Page Include="SettingsWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
