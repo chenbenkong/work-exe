@@ -21,9 +21,8 @@ https://github.com/chenbenkong/work-exe
 
 ### 方式一：直接下载 Release（推荐）
 
-1. 打开仓库 Actions 页面，找到最新成功的构建。
-2. 下载 `WorkExe-Release-Zip` 工件。
-3. 解压后双击 `Run.bat` 即可运行。
+1. 下载最新 Release 包：https://github.com/chenbenkong/work-exe/releases/download/v1.0.0/WorkExe-Release.zip
+2. 解压后双击 `Run.bat` 即可运行。
 
 ### 方式二：本地构建
 
